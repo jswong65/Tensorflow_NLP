@@ -13,6 +13,7 @@ class CharRNNMoel(object):
 		self.initial_state = None 
 		self.logits = None
 		self.outputs = None
+		self.final_state = None
 
 		if mode == "sampling":
             batch_size, num_steps = 1, 1
@@ -64,7 +65,7 @@ class CharRNNMoel(object):
 
 	def build_network(self):
 		# Run each sequence step through the RNN with tf.nn.dynamic_rnn 
-        self.outputs, self.state = tf.nn.dynamic_rnn(cell,
+        self.outputs, self.final_state = tf.nn.dynamic_rnn(cell,
                                            x_one_hot,
                                            initial_state=self.initial_state)
 
@@ -92,7 +93,7 @@ class CharRNNMoel(object):
 			softmax_w = tf.get_variable('softmax_w', 
 										[self.config.lstm_size, self.config.vocab_size], 
 										initializer=tf.truncated_normal_initializer(stddev=0.1))
-			
+
 			softmax_b = tf.get_variable('softmax_b', [self.config.vocab_size])
     
 		# Since output is a bunch of rows of RNN cell outputs, logits will be a bunch
