@@ -15,20 +15,23 @@ SKIP_STEP = 2000 # how many steps to skip before reporting the loss
 
 def word2vec(batch_gen):
     """ Build the graph for word2vec model and train it """
-    # Step 1: define the placeholders for input and output
-    # center_words have to be int to work on embedding lookup
 
-    embedding = tf.get_variable(tf.float32, 
+    # Create a placeholder for input data
+    inputs = tf.placeholder(tf.int32, 
+                            shape=[None], 
+                            name="inputs")
+
+    # Create a placeholder for targets
+    labels = tf.placeholder(tf.int32,
+                            shape=[None, 1],
+                            name="labels")    
+
+    # Create a embedding matrix
+    embeddings = tf.get_variable(name="embedings", 
                                 shape=(VOCAB_SIZE, EMBED_SIZE),
-                                initializer = tf.random_uniform_initializer(-1, 1), 
-                                name="embeding")
+                                dtype=tf.float32,
+                                initializer=tf.random_uniform_initializer(-1, 1))
 
-
-    # Step 2: define weights. In word2vec, it's actually the weights that we care about
-    # vocab size x embed size
-    # initialized to random uniform -1 to 1
-
-    # TOO DO
 
 
     # Step 3: define the inference
@@ -36,7 +39,10 @@ def word2vec(batch_gen):
     # embed = tf.nn.embedding_lookup(embed_matrix, center_words, name='embed')
 
     # TO DO
+    embed_words = tf.nn.embedding_lookup(embeddings, inputs)
 
+    # create weights for noise-contrastive estimation (NCE)
+    
 
         # Step 4: construct variables for NCE loss
         # tf.nn.nce_loss(weights, biases, labels, inputs, num_sampled, num_classes, ...)
@@ -44,7 +50,28 @@ def word2vec(batch_gen):
         # bias: vocab size, initialized to 0
 
         # TO DO
+    with tf.variable_scope("loss"):
 
+        nce_weights = tf.get_variable(name="nce_weights",
+                                    shape=(VOCAB_SIZE, EMBED_SIZE),
+                                    dtype=tf.float32,
+                                    initializer=tf.truncated_normal_initializer(stddev=1.0 / (EMBED_SIZE ** 0.5)))
+
+        # create bias for noise-contrastive estimation (NCE)
+        nce_biases = tf.get_variable(name="nce_biases",
+                                    shape=[VOCAB_SIZE],
+                                    dtype=tf.float32,
+                                    initializer=tf.zeros_initializer())
+                                    
+
+        loss = tf.reduce_mean(
+                tf.nn.nce_loss(weights=nce_weights,
+                            biases=nce_biases,
+                            labels=labels,
+                            inputs=embed_words,
+                            num_sampled=NUM_SAMPLED,
+                            num_classes=VOCAB_SIZE,
+                            name='nce_loss'))
 
         # define loss function to be NCE loss function
         # tf.nn.nce_loss(weights, biases, labels, inputs, num_sampled, num_classes, ...)
@@ -58,17 +85,19 @@ def word2vec(batch_gen):
     
     # TO DO
 
-
+    optimizer = tf.train.GradientDescentOptimizer(LEARNING_RATE).minimize(loss)
 
     with tf.Session() as sess:
         # TO DO: initialize variables
-
+        sess.run(tf.global_variables_initializer())
 
         total_loss = 0.0 # we use this to calculate the average loss in the last SKIP_STEP steps
         writer = tf.summary.FileWriter('./graphs/no_frills/', sess.graph)
         for index in range(NUM_TRAIN_STEPS):
             centers, targets = next(batch_gen)
             # TO DO: create feed_dict, run optimizer, fetch loss_batch
+            loss_batch, _ = sess.run([loss, optimizer], 
+                                    feed_dict={inputs:centers, labels:targets})
 
             total_loss += loss_batch
             if (index + 1) % SKIP_STEP == 0:
