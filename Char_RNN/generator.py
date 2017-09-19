@@ -1,5 +1,10 @@
-class Generator(object):
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
+import tensorflow as tf
+
+class Generator(object):
 
 	def pick_top_n(preds, vocab_size, top_n=5):
 		p = np.squeeze(preds)
