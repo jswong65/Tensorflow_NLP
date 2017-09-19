@@ -1,9 +1,13 @@
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import tensorflow as tf
 
 class CharRNNMoel(object):
 
 	def __init__(self, config, mode):
-		self.config = config
+		self.FLAGS = config
 		self.mode = mode
 
 		self.inputs = None
@@ -14,11 +18,12 @@ class CharRNNMoel(object):
 		self.logits = None
 		self.outputs = None
 		self.final_state = None
+		self.train_op = None
 
 		if mode == "sampling":
-            batch_size, num_steps = 1, 1
-        else:
-            batch_size, num_steps = batch_size, num_steps
+			self.batch_size, self.num_steps = 1, 1
+		else:
+			self.batch_size, self.num_steps = self.FLAGS.batch_size, self.FLAGS.num_steps
 
 
 
@@ -32,13 +37,19 @@ class CharRNNMoel(object):
 	        
 		'''
 		# Declare placeholders we'll feed into the graph
-		self.inputs = tf.placeholder(tf.int32, [self.config.batch_size, self.config.num_steps], name="inputs")
-		self.targets = tf.placeholder(tf.int32, [self.config.batch_size, self.config.num_steps], name="targets")
+		self.inputs = tf.placeholder(tf.int32, 
+									shape=(self.batch_size, self.num_steps), 
+									name="inputs")
+
+		self.targets = tf.placeholder(tf.int32, 
+									shape=(self.batch_size, self.num_steps),
+									name="targets")
 	    
 		# Keep probability placeholder for drop out layers
-		self.keep_prob = tf.placeholder(tf.float32, name="keep_prob")
+		self.keep_prob = tf.placeholder(tf.float32, 
+									name="keep_prob")
 
-	def build_lstm(lstm_size, num_layers, batch_size, keep_prob):
+	def build_lstm(self):
 		''' Build LSTM cell.
 	    
 			Arguments
@@ -52,21 +63,27 @@ class CharRNNMoel(object):
 		### Build the LSTM Cell
 		def build_cell(num_units, keep_prob):
 			# Use a basic LSTM cell
-			lstm = tf.contrib.rnn.BasicLSTMCell(lstm_size)
+			lstm = tf.contrib.rnn.BasicLSTMCell(num_units)
 			# Add dropout to the cell outputs
-			drop = tf.contrib.rnn.DropoutWrapper(lstm, output_keep_prob = keep_prob)
+			drop = tf.contrib.rnn.DropoutWrapper(lstm, 
+									output_keep_prob = keep_prob)
 			return drop
 	    
 		# Stack up multiple LSTM layers, for deep learning
-		self.cell = tf.contrib.rnn.MultiRNNCell([build_cell(lstm_size, keep_prob) for _ in range(num_layers)])
-		self.initial_state = cell.zero_state(batch_size, tf.float32)
+		self.cell = tf.contrib.rnn.MultiRNNCell(
+					[build_cell(self.FLAGS.lstm_size, self.keep_prob) for _ in range(self.FLAGS.num_layers)])
+		
+		self.initial_state = self.cell.zero_state(self.batch_size, tf.float32)
 	    
 
 
 	def build_network(self):
+
+		x_one_hot = tf.one_hot(self.inputs, self.FLAGS.vocab_size)
+
 		# Run each sequence step through the RNN with tf.nn.dynamic_rnn 
-        self.outputs, self.final_state = tf.nn.dynamic_rnn(cell,
-                                           x_one_hot,
+		self.outputs, self.final_state = tf.nn.dynamic_rnn(self.cell,
+                                           inputs=x_one_hot,
                                            initial_state=self.initial_state)
 
 	def build_output(self):
@@ -85,16 +102,16 @@ class CharRNNMoel(object):
 		# Concatenate lstm_output over axis 1 (the columns)
 		seq_output = tf.concat(self.outputs, axis=1)
 		# Reshape seq_output to a 2D tensor with lstm_size columns
-		x = tf.reshape(seq_output, [-1, self.config.lstm_size])
+		x = tf.reshape(seq_output, [-1, self.FLAGS.lstm_size])
     
 		# Connect the RNN outputs to a softmax layer
 		with tf.variable_scope('softmax'):
 			# Create the weight and bias variables here
-			softmax_w = tf.get_variable('softmax_w', 
-										[self.config.lstm_size, self.config.vocab_size], 
+			softmax_w = tf.get_variable('weights', 
+										shape=(self.FLAGS.lstm_size, self.FLAGS.vocab_size), 
 										initializer=tf.truncated_normal_initializer(stddev=0.1))
 
-			softmax_b = tf.get_variable('softmax_b', [self.config.vocab_size])
+			softmax_b = tf.get_variable('biases', [self.FLAGS.vocab_size])
     
 		# Since output is a bunch of rows of RNN cell outputs, logits will be a bunch
 		# of rows of logit outputs, one for each step and sequence
@@ -103,7 +120,7 @@ class CharRNNMoel(object):
 		# Use softmax to get the probabilities for predicted characters
 		self.output = tf.nn.softmax(self.logits, name="predictions")
     
-    def build_loss(self):
+	def build_loss(self):
 		''' Calculate the loss from the logits and the targets.
 		
 			Arguments
@@ -116,14 +133,15 @@ class CharRNNMoel(object):
 		'''
     
 		# One-hot encode targets and reshape to match logits, one row per sequence per step
-		y_one_hot = tf.one_hot(self.targets, self.config.vocab_size)
+		y_one_hot = tf.one_hot(self.targets, self.FLAGS.vocab_size)
 		y_reshaped = tf.reshape(y_one_hot, self.logits.get_shape()) 
     
 		# Softmax cross entropy loss
 		loss = tf.nn.softmax_cross_entropy_with_logits(logits=self.logits, labels=y_reshaped)
+
 		self.loss = tf.reduce_mean(loss)
     
-    def build_optimizer(self):
+	def build_optimizer(self):
 		''' Build optmizer for training, using gradient clipping.
 		
 			Arguments:
@@ -133,14 +151,20 @@ class CharRNNMoel(object):
 		'''
     
 		# Optimizer for training, using gradient clipping to control exploding gradients
-		tvars = tf.trainable_variables()
-		grads, _ = tf.clip_by_global_norm(tf.gradients(self.loss, tvars), self.config.grad_clip)
-		train_op = tf.train.AdamOptimizer(self.config.learning_rate)
-		self.optimizer = train_op.apply_gradients(zip(grads, tvars))
+		# get gradients of all of the trainable variables
+		trainables = tf.trainable_variables()
+		gradients = tf.gradients(self.loss, trainables)
+		
+		clipped_gradients, _ = tf.clip_by_global_norm(gradients, self.FLAGS.grad_clip)
 
-	def build_mode(self):
+		optimizer = tf.train.AdamOptimizer(self.FLAGS.learning_rate)
+
+		self.train_op = optimizer.apply_gradients(zip(clipped_gradients, trainables))
+
+	def build_model(self):
 		self.build_inputs()
 		self.build_lstm()
+		self.build_network()
 		self.build_output()
 		self.build_loss()
 		self.build_optimizer()
